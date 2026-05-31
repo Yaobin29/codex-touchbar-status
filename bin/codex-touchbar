@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PY_SCRIPT="$ROOT/services/codex-status-display/codex_status_display.py"
+STATUS_WIDGET="$ROOT/local-service-wrappers/services/codex-status-display/touchbar_status_widget.sh"
+APPROVE_ACTION="$ROOT/local-service-wrappers/services/codex-status-display/touchbar_approve_action.sh"
+STATE_DIR="$ROOT/local-runtime/codex-status-display"
+CONFIG_FILE="$STATE_DIR/app-config.json"
+
+usage() {
+  cat <<USAGE
+codex-touchbar commands:
+  connect [--codex-home PATH] [--interval N] [--max-wire-bytes N]
+  status
+  preview
+  btt-commands
+  approve
+  help
+
+Examples:
+  codex-touchbar connect --codex-home "$HOME/.codex"
+  codex-touchbar status
+  codex-touchbar btt-commands
+USAGE
+}
+
+ensure_layout() {
+  mkdir -p "$STATE_DIR"
+  if [[ ! -f "$ROOT/AGENTS.md" ]]; then
+    cat > "$ROOT/AGENTS.md" <<'AGENT'
+# Codex Touch Bar Runtime Root
+AGENT
+  fi
+}
+
+write_config() {
+  local codex_home="$1"
+  local interval="$2"
+  local max_wire_bytes="$3"
+  python3 - "$CONFIG_FILE" "$ROOT" "$codex_home" "$interval" "$max_wire_bytes" <<'PY'
+import json
+import pathlib
+import sys
+
+config_path = pathlib.Path(sys.argv[1])
+root = pathlib.Path(sys.argv[2]).expanduser().resolve()
+codex_home = str(pathlib.Path(sys.argv[3]).expanduser())
+interval = max(1, int(float(sys.argv[4])))
+max_wire_bytes = max(256, int(float(sys.argv[5])))
+
+existing = {}
+if config_path.exists():
+    try:
+        existing = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        existing = {}
+
+wifi = existing.get("wifi") if isinstance(existing.get("wifi"), dict) else {}
+display = existing.get("display") if isinstance(existing.get("display"), dict) else {}
+firmware = existing.get("firmware") if isinstance(existing.get("firmware"), dict) else {}
+
+def toggles_default(raw):
+    if not isinstance(raw, dict):
+        raw = {}
+    return {
+        "run_count": bool(raw.get("run_count", True)),
+        "done_count": bool(raw.get("done_count", True)),
+        "need_response": bool(raw.get("need_response", True)),
+        "active_list": bool(raw.get("active_list", True)),
+        "manual_items": bool(raw.get("manual_items", True)),
+    }
+
+payload = {
+    "device_id": str(existing.get("device_id") or "legacy"),
+    "codex_home": codex_home,
+    "repo_root": str(root),
+    "wifi": {
+        "ssid": str(wifi.get("ssid") or ""),
+        "password": str(wifi.get("password") or ""),
+        "status_url": str(wifi.get("status_url") or "http://127.0.0.1:8787/wire"),
+    },
+    "display": {
+        "preset": str(display.get("preset") or "custom"),
+        "interval": interval,
+        "max_wire_bytes": max_wire_bytes,
+        "toggles": toggles_default(display.get("toggles")),
+        "manual_items": display.get("manual_items") if isinstance(display.get("manual_items"), list) else [],
+        "name_overrides": display.get("name_overrides") if isinstance(display.get("name_overrides"), dict) else {},
+    },
+    "firmware": {
+        "serial_port": str(firmware.get("serial_port") or "/dev/cu.wchusbserial11120"),
+        "baud": int(firmware.get("baud") or 115200),
+    },
+}
+
+config_path.parent.mkdir(parents=True, exist_ok=True)
+config_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+print(str(config_path))
+PY
+}
+
+normalized_path() {
+  python3 - "$1" <<'PY'
+import pathlib
+import sys
+print(str(pathlib.Path(sys.argv[1]).expanduser()))
+PY
+}
+
+cmd_connect() {
+  local codex_home="$HOME/.codex"
+  local interval="5"
+  local max_wire_bytes="1024"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --codex-home)
+        codex_home="$2"
+        shift 2
+        ;;
+      --interval)
+        interval="$2"
+        shift 2
+        ;;
+      --max-wire-bytes)
+        max_wire_bytes="$2"
+        shift 2
+        ;;
+      *)
+        echo "Unknown connect option: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  ensure_layout
+  local saved
+  saved="$(write_config "$codex_home" "$interval" "$max_wire_bytes")"
+
+  # Prime one snapshot so widgets have immediate values.
+  python3 "$PY_SCRIPT" --root "$ROOT" --quiet >/dev/null 2>&1 || true
+
+  echo "connected=true"
+  echo "config_file=$saved"
+  echo "codex_home=$(normalized_path "$codex_home")"
+  echo
+  cmd_btt_commands
+}
+
+cmd_status() {
+  ensure_layout
+  python3 "$PY_SCRIPT" --root "$ROOT" --quiet >/dev/null 2>&1 || true
+  python3 - "$STATE_DIR/status.json" "$CONFIG_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+status_path = pathlib.Path(sys.argv[1])
+config_path = pathlib.Path(sys.argv[2])
+
+status = {}
+if status_path.exists():
+    try:
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+    except Exception:
+        status = {}
+
+config = {}
+if config_path.exists():
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        config = {}
+
+counts = status.get("counts") if isinstance(status.get("counts"), dict) else {}
+print(f"done={int(counts.get('completed_today', 0) or 0)}")
+print(f"run={int(counts.get('running_projects', 0) or 0)}")
+print(f"approve={int(counts.get('awaiting_response', 0) or 0)}")
+print(f"updated_at={status.get('updated_at', '')}")
+print(f"codex_home={config.get('codex_home', '')}")
+print(f"runtime_root={config.get('repo_root', '')}")
+PY
+}
+
+cmd_preview() {
+  ensure_layout
+  python3 "$PY_SCRIPT" --root "$ROOT"
+}
+
+cmd_btt_commands() {
+  echo "BTT status scripts (Shell Script / Task Widget):"
+  echo "  DONE:    $STATUS_WIDGET done"
+  echo "  RUN:     $STATUS_WIDGET run"
+  echo "  CHAT:    $STATUS_WIDGET chat"
+  echo "  APPROVE: $STATUS_WIDGET approve"
+  echo ""
+  echo "BTT Approve click action script:"
+  echo "  $APPROVE_ACTION"
+}
+
+cmd_approve() {
+  ensure_layout
+  "$APPROVE_ACTION"
+}
+
+main() {
+  local cmd="${1:-help}"
+  shift || true
+
+  case "$cmd" in
+    connect)
+      cmd_connect "$@"
+      ;;
+    status)
+      cmd_status
+      ;;
+    preview)
+      cmd_preview
+      ;;
+    btt-commands)
+      cmd_btt_commands
+      ;;
+    approve)
+      cmd_approve
+      ;;
+    help|-h|--help)
+      usage
+      ;;
+    *)
+      echo "Unknown command: $cmd" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"

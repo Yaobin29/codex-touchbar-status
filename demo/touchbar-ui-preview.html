@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Touch Bar Codex UI Preview</title>
+    <style>
+      :root {
+        --bg: #dedede;
+        --bar: #020202;
+        --done: #1599d8;
+        --run: #4ab233;
+        --approve: #ef7a34;
+        --text: #f4ebe4;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        font-family: "SF Pro Display", "PingFang SC", "Helvetica Neue", sans-serif;
+        background: radial-gradient(circle at 30% 10%, #f2f2f2, var(--bg));
+        color: #222;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 32px;
+      }
+
+      .wrap {
+        width: min(1840px, 98vw);
+      }
+
+      .title {
+        margin: 0 0 14px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+
+      .touchbar {
+        width: 100%;
+        min-height: 126px;
+        border-radius: 14px;
+        background: linear-gradient(180deg, #0a0a0a, #020202 60%);
+        border: 1px solid #171717;
+        box-shadow: 0 20px 36px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 18px;
+      }
+
+      .pill {
+        border-radius: 14px;
+        color: #fff;
+        height: 76px;
+        padding: 0 26px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: clamp(28px, 3.1vw, 56px);
+        line-height: 1;
+        letter-spacing: 0.03em;
+        white-space: nowrap;
+        user-select: none;
+      }
+
+      .pill.done {
+        background: linear-gradient(180deg, #2eb2e9, var(--done));
+      }
+
+      .run-toggle {
+        border: 0;
+        cursor: pointer;
+        background: linear-gradient(180deg, #5fc647, var(--run));
+        color: #fff;
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        transition: filter 180ms ease, transform 180ms ease, box-shadow 220ms ease;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15);
+      }
+
+      .run-toggle:hover {
+        filter: brightness(1.04);
+      }
+
+      .run-toggle:active {
+        transform: translateY(1px);
+      }
+
+      .run-toggle .run-caret {
+        font-size: clamp(18px, 1.1vw, 24px);
+        opacity: 0.82;
+        transform: translateY(1px) rotate(0deg);
+        transition: transform 240ms ease;
+      }
+
+      .touchbar.run-expanded .run-toggle {
+        filter: saturate(1.07) brightness(1.03);
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+      }
+
+      .touchbar.run-expanded .run-toggle .run-caret {
+        transform: translateY(1px) rotate(90deg);
+      }
+
+      .chat {
+        color: var(--text);
+        flex: 1;
+        min-width: 360px;
+        display: grid;
+        gap: 0;
+        align-items: center;
+      }
+
+      .chat-window {
+        width: clamp(430px, 44vw, 640px);
+        transition: width 360ms cubic-bezier(0.2, 0.85, 0.2, 1);
+        border-radius: 12px;
+        position: relative;
+        justify-self: start;
+      }
+
+      .touchbar.run-expanded .chat-window {
+        width: clamp(760px, 66vw, 1120px);
+      }
+
+      .chat-window::before,
+      .chat-window::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 26px;
+        z-index: 2;
+        pointer-events: none;
+      }
+
+      .chat-window::before {
+        left: 0;
+        background: linear-gradient(90deg, rgba(2, 2, 2, 1), rgba(2, 2, 2, 0));
+      }
+
+      .chat-window::after {
+        right: 0;
+        background: linear-gradient(270deg, rgba(2, 2, 2, 1), rgba(2, 2, 2, 0));
+      }
+
+      .chat-track {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 2px 8px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scroll-snap-type: x mandatory;
+        scroll-behavior: smooth;
+        scrollbar-width: none;
+      }
+
+      .chat-track::-webkit-scrollbar {
+        display: none;
+      }
+
+      .chat-item {
+        min-width: clamp(168px, 11vw, 230px);
+        max-width: clamp(168px, 11vw, 230px);
+        height: 68px;
+        border-radius: 12px;
+        border: 1px solid #252525;
+        background: linear-gradient(180deg, #131313, #0a0a0a);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 12px;
+        scroll-snap-align: start;
+        opacity: 0.92;
+        transform: scale(0.985);
+        transition: transform 220ms ease, opacity 220ms ease, border-color 220ms ease;
+      }
+
+      .touchbar.run-expanded .chat-item {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      .chat-item.is-active {
+        border-color: #3c3c3c;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.13), 0 0 0 1px rgba(255, 255, 255, 0.06);
+      }
+
+      .chat-bullet {
+        font-size: clamp(16px, 1.2vw, 22px);
+        color: #f0e8e1;
+        line-height: 1;
+        transform: translateY(-1px);
+      }
+
+      .chat-name {
+        font-size: clamp(20px, 1.65vw, 32px);
+        font-weight: 520;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+      }
+
+      .approve-btn {
+        border: 0;
+        border-radius: 14px;
+        background: linear-gradient(180deg, #f4944f, var(--approve));
+        color: #fff;
+        height: 76px;
+        padding: 0 28px;
+        font-size: clamp(30px, 2.8vw, 54px);
+        cursor: pointer;
+        transition: transform 120ms ease, filter 120ms ease;
+      }
+
+      .approve-btn:hover { filter: brightness(1.04); }
+      .approve-btn:active { transform: translateY(1px) scale(0.995); }
+
+      .approve-btn.needs-approve {
+        animation: approvePulse 1.8s ease-in-out infinite;
+        box-shadow: 0 0 0 0 rgba(239, 122, 52, 0.5);
+      }
+
+      .approve-btn.needs-approve::after {
+        content: "!";
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-left: 10px;
+        width: 0.95em;
+        height: 0.95em;
+        font-size: 0.56em;
+        border-radius: 999px;
+        background: #fff;
+        color: #e86624;
+        font-weight: 700;
+        transform: translateY(-0.03em);
+      }
+
+      @keyframes approvePulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(239, 122, 52, 0.45); }
+        55% { box-shadow: 0 0 0 12px rgba(239, 122, 52, 0); }
+      }
+
+      .panel {
+        margin-top: 18px;
+        background: #ffffffd6;
+        border: 1px solid #d6d6d6;
+        border-radius: 12px;
+        padding: 12px 14px;
+        display: grid;
+        grid-template-columns: repeat(7, minmax(130px, 1fr));
+        gap: 10px;
+      }
+
+      .panel label { font-size: 13px; color: #5d5d5d; display: grid; gap: 4px; }
+      .panel input {
+        height: 34px;
+        border: 1px solid #cfcfcf;
+        border-radius: 8px;
+        padding: 0 10px;
+        font-size: 14px;
+      }
+
+      .toast {
+        margin-top: 12px;
+        min-height: 24px;
+        color: #404040;
+        font-size: 13px;
+      }
+
+      .modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.35);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+      }
+
+      .modal.open { display: flex; }
+
+      .card {
+        width: min(520px, 92vw);
+        background: #fff;
+        border-radius: 14px;
+        padding: 18px;
+        box-shadow: 0 14px 28px rgba(0, 0, 0, 0.2);
+      }
+
+      .card h3 { margin: 0 0 8px; font-size: 22px; }
+      .card p { margin: 0 0 16px; line-height: 1.4; white-space: pre-line; }
+      .row { display: flex; justify-content: flex-end; gap: 10px; }
+      .row button {
+        height: 36px;
+        border-radius: 8px;
+        border: 1px solid #d0d0d0;
+        background: #fff;
+        padding: 0 14px;
+        cursor: pointer;
+      }
+
+      .row .primary {
+        border-color: #ea6f2e;
+        background: #ef7a34;
+        color: #fff;
+      }
+
+      @media (max-width: 1200px) {
+        .touchbar { gap: 12px; padding: 12px; }
+        .pill, .run-toggle, .approve-btn { height: 60px; padding: 0 16px; border-radius: 10px; font-size: clamp(21px, 3vw, 34px); }
+        .chat { min-width: 0; }
+        .chat-window { width: clamp(290px, 40vw, 420px); }
+        .touchbar.run-expanded .chat-window { width: clamp(430px, 58vw, 700px); }
+        .chat-item { min-width: 150px; max-width: 150px; height: 52px; padding: 0 10px; border-radius: 8px; }
+        .chat-name { font-size: clamp(14px, 2.5vw, 20px); }
+      }
+
+      @media (max-width: 900px) {
+        .touchbar {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+        }
+
+        .chat {
+          grid-column: 1 / -1;
+          min-width: 0;
+        }
+
+        .chat-window,
+        .touchbar.run-expanded .chat-window {
+          width: 100%;
+        }
+
+        .panel {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h2 class="title">Codex Touch Bar UI Preview (HTML Mock)</h2>
+
+      <div class="touchbar" id="touchbar" role="toolbar" aria-label="Codex Touch Bar Preview">
+        <div class="pill done" id="doneText">DONE 3</div>
+
+        <button class="pill run-toggle" id="runToggle" aria-expanded="false" aria-controls="chatTrack" title="点击展开/收起 running 列表">
+          <span id="runText">RUN 6</span>
+          <span class="run-caret" aria-hidden="true">▶</span>
+        </button>
+
+        <div class="chat" id="chatRegion">
+          <div class="chat-window">
+            <div class="chat-track" id="chatTrack" aria-label="Running chats"></div>
+          </div>
+        </div>
+
+        <button class="approve-btn" id="approveBtn">Approve ?</button>
+      </div>
+
+      <div class="panel">
+        <label>DONE
+          <input id="doneInput" type="number" min="0" max="99" value="3" />
+        </label>
+        <label>RUN
+          <input id="runInput" type="number" min="0" max="99" value="6" />
+        </label>
+        <label>Approve Count
+          <input id="approveInput" type="number" min="0" max="99" value="0" />
+        </label>
+        <label>Total Chats
+          <input id="chatTotalInput" type="number" min="1" max="20" value="8" />
+        </label>
+        <label>Chat 1
+          <input id="chatInput1" type="text" value="Chat1" maxlength="24" />
+        </label>
+        <label>Chat 2
+          <input id="chatInput2" type="text" value="Chat2" maxlength="24" />
+        </label>
+        <label>Chat 3
+          <input id="chatInput3" type="text" value="Chat3" maxlength="24" />
+        </label>
+      </div>
+
+      <div class="toast" id="toast">点击 Approve 可模拟“二次确认后打开待处理线程”。</div>
+    </div>
+
+    <div class="modal" id="modal">
+      <div class="card">
+        <h3>Codex Approve</h3>
+        <p id="modalText">Pending approvals: 0</p>
+        <div class="row">
+          <button id="cancelBtn">Cancel</button>
+          <button class="primary" id="openBtn">Open</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const touchbar = document.getElementById("touchbar");
+      const doneText = document.getElementById("doneText");
+      const runText = document.getElementById("runText");
+      const runToggle = document.getElementById("runToggle");
+      const chatTrack = document.getElementById("chatTrack");
+      const approveBtn = document.getElementById("approveBtn");
+
+      const doneInput = document.getElementById("doneInput");
+      const runInput = document.getElementById("runInput");
+      const approveInput = document.getElementById("approveInput");
+      const chatTotalInput = document.getElementById("chatTotalInput");
+      const chatInput1 = document.getElementById("chatInput1");
+      const chatInput2 = document.getElementById("chatInput2");
+      const chatInput3 = document.getElementById("chatInput3");
+
+      const toast = document.getElementById("toast");
+      const modal = document.getElementById("modal");
+      const modalText = document.getElementById("modalText");
+      const cancelBtn = document.getElementById("cancelBtn");
+      const openBtn = document.getElementById("openBtn");
+
+      let runExpanded = false;
+      let forcedByApprove = false;
+      let currentNames = [];
+
+      function num(v) {
+        const n = Number(v);
+        return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+      }
+
+      function chatName(value, fallback) {
+        const text = String(value || "").trim();
+        return text || fallback;
+      }
+
+      function escapeHtml(text) {
+        return String(text)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function getRunningNames() {
+        const runCount = num(runInput.value);
+        const totalCount = Math.max(1, Math.min(20, num(chatTotalInput.value) || 1));
+        const baseNames = [
+          chatName(chatInput1.value, "Chat1"),
+          chatName(chatInput2.value, "Chat2"),
+          chatName(chatInput3.value, "Chat3"),
+        ];
+        const desired = Math.max(runCount, totalCount);
+        const names = [];
+
+        for (let i = 0; i < desired; i += 1) {
+          if (i < baseNames.length) {
+            names.push(baseNames[i]);
+          } else {
+            names.push(`Chat${i + 1}`);
+          }
+        }
+        return names;
+      }
+
+      function renderChats(names) {
+        currentNames = names;
+        const cards = names.map((name, index) => {
+          const active = index === 0 ? " is-active" : "";
+          return `<article class="chat-item${active}" title="${escapeHtml(name)}"><span class="chat-bullet">*</span><span class="chat-name">${escapeHtml(name)}</span></article>`;
+        });
+        chatTrack.innerHTML = cards.join("");
+
+        if (!runExpanded) {
+          chatTrack.scrollLeft = 0;
+        }
+      }
+
+      function applyRunState(expanded) {
+        runExpanded = expanded;
+        touchbar.classList.toggle("run-expanded", expanded);
+        runToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+        if (!expanded) {
+          chatTrack.scrollTo({ left: 0, behavior: "smooth" });
+        }
+      }
+
+      function sync() {
+        const done = num(doneInput.value);
+        const run = num(runInput.value);
+        const approve = num(approveInput.value);
+
+        doneText.textContent = `DONE ${done}`;
+        runText.textContent = `RUN ${run}`;
+        approveBtn.textContent = approve > 0 ? `Approve ${approve}` : "Approve ?";
+        approveBtn.classList.toggle("needs-approve", approve > 0);
+
+        if (approve > 0) {
+          if (!runExpanded) {
+            applyRunState(true);
+          }
+          forcedByApprove = true;
+        } else if (forcedByApprove) {
+          applyRunState(false);
+          forcedByApprove = false;
+        }
+
+        renderChats(getRunningNames());
+      }
+
+      [doneInput, runInput, approveInput, chatTotalInput, chatInput1, chatInput2, chatInput3].forEach((el) => {
+        el.addEventListener("input", sync);
+      });
+
+      runToggle.addEventListener("click", () => {
+        if (num(approveInput.value) > 0 && runExpanded) {
+          toast.textContent = "当前有待 Approve 会话，列表保持展开。";
+          return;
+        }
+        applyRunState(!runExpanded);
+      });
+
+      chatTrack.addEventListener(
+        "wheel",
+        (event) => {
+          if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+            event.preventDefault();
+            chatTrack.scrollLeft += event.deltaY;
+          }
+        },
+        { passive: false }
+      );
+
+      approveBtn.addEventListener("click", () => {
+        const pending = num(approveInput.value);
+        if (pending <= 0) {
+          toast.textContent = "No pending approvals right now.";
+          return;
+        }
+
+        const firstName = currentNames[0] || chatName(chatInput1.value, "Chat1");
+        modalText.textContent = `Pending approvals: ${pending}\nOpen first: ${firstName}`;
+        modal.classList.add("open");
+      });
+
+      cancelBtn.addEventListener("click", () => {
+        modal.classList.remove("open");
+        toast.textContent = "Canceled. Nothing opened.";
+      });
+
+      openBtn.addEventListener("click", () => {
+        const pending = num(approveInput.value);
+        approveInput.value = pending > 0 ? String(pending - 1) : "0";
+        sync();
+        modal.classList.remove("open");
+        toast.textContent = "Opened first pending thread (preview behavior).";
+      });
+
+      modal.addEventListener("click", (event) => {
+        if (event.target === modal) {
+          modal.classList.remove("open");
+        }
+      });
+
+      applyRunState(false);
+      sync();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,6 @@
+请你在这台 Mac 上直接帮我完成这个安装包的部署，不要只给我步骤：
+1) 进入这个目录并执行 `./CodexTouchBarInstaller.command`。
+2) 安装完成后执行 `codex-touchbar connect --codex-home ~/.codex`（如果命令不在 PATH，就用 `~/Library/Application Support/CodexTouchBar/bin/codex-touchbar connect --codex-home ~/.codex`）。
+3) 再执行 `codex-touchbar status` 和 `codex-touchbar btt-commands`，并把最终可用状态与 BTT 需要填的脚本路径直接给我。
+4) 如果 BetterTouchTool 已安装，请继续帮我把 4 个 Touch Bar 脚本按钮配置好（DONE / RUN / CHAT / APPROVE），以及 APPROVE 的点击动作脚本。
+5) 全部完成后只回复我“已可用”并附上关键结果（done/run/approve 数值与脚本路径）。
