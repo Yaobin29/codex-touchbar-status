@@ -1,13 +1,12 @@
-I just open-sourced **Codex TouchBar Status**.
+I turned the “useless” MacBook Touch Bar into a live AI ops panel for Codex.
 
-It turns a MacBook Touch Bar into a live Codex control surface:
-- DONE count
-- RUN count (expand/collapse)
-- running chat scroll list
-- APPROVE alert + confirm action
+Now it shows:
+- DONE today
+- RUN now (tap to expand)
+- APPROVE-needed alerts
 
-Built for local-first workflows and fast context switching.
+Local-first. One-command connect. Open source.
 
 Repo: https://github.com/Yaobin29/codex-touchbar-status
 
-If you want, I can also share the exact one-line Codex prompt I use to auto-install this on another Mac.
+If you want the exact one-line Codex install prompt, reply "prompt".

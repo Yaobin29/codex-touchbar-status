@@ -1,139 +1,119 @@
-# I Turned My MacBook Touch Bar Into a Live Codex Control Surface
+# I Turned a “Dead” MacBook Touch Bar Into a Live AI Ops Panel
 
-## Why I built this
+Most people wrote off the Touch Bar.
 
-When I am deep in research and development work, I often run multiple Codex tasks in parallel. The biggest friction was not coding itself, it was context switching:
+I did too.
 
-- Which threads are still running?
-- Which tasks finished?
-- Which ones are blocked waiting for my approval?
+Then I noticed something weird in my daily Codex workflow: the biggest time loss was not coding, it was **attention switching**.
 
-I wanted a tiny, always-visible status surface that did not require opening another dashboard window.
+Every hour, I kept asking the same questions:
 
-So I built **Codex TouchBar Status**: a local, installable setup that maps Codex state to Touch Bar widgets.
+- What is still running?
+- What already finished?
+- Which thread is blocked and waiting for my approval?
 
-## What it shows
+So I built a tiny local system that turns the Touch Bar into a real-time Codex status strip.
 
-The Touch Bar layout is simple and action-oriented:
+## The result
 
-- `DONE`: how many tasks completed today
-- `RUN`: how many active/running threads
-- `CHAT`: a horizontally scrollable running list (expand/collapse on RUN)
-- `APPROVE`: approval-needed indicator with confirm behavior
+My Touch Bar now acts like a compact control surface:
 
-There are two interaction ideas I care about:
+- `DONE` -> completed tasks today
+- `RUN` -> active tasks right now (click to expand)
+- `CHAT` -> horizontally scrollable active thread list
+- `APPROVE` -> approval-needed alert + confirm action
 
-1. **Progress at a glance**
-2. **Fast intervention when approval is needed**
+And one behavior matters most:
 
-If approvals are pending, the run area auto-expands and the approve button enters an alert state.
+When approval is pending, the run area auto-expands and the approve control becomes impossible to ignore.
 
-## Design principles
+## Why this works better than a dashboard tab
 
-I tried to keep the product behavior sharp:
+A dashboard is powerful, but it is not always visible.
 
-- **No cloud dependency for rendering**
-- **Local-first data flow**
-- **Low ceremony install**
-- **Clear states over fancy visuals**
+The Touch Bar is always in your peripheral vision while you type. That means:
 
-I also wanted an installation flow that works for non-technical users:
+- faster reaction to blocked tasks
+- fewer missed approvals
+- less mental overhead from context switching
 
-- unzip folder
+In practice, this changed my workflow from “periodically check status” to “status is ambient by default.”
+
+## Design choices (the high-leverage ones)
+
+I intentionally kept the product opinionated.
+
+### 1) Local-first, no cloud dependency
+
+Status is computed from local Codex state and rendered locally.
+
+### 2) Minimal install friction
+
+- unzip
 - run installer
 - run one connect command
-- paste script paths into BetterTouchTool
 
-## Technical approach
+That is it.
 
-The system reads local Codex state and emits normalized status snapshots.
+### 3) Action-oriented states, not decorative UI
 
-At a high level:
+The system prioritizes decisions:
+
+- continue working
+- review running threads
+- handle approval immediately
+
+### 4) Expand/collapse is not just visual polish
+
+`RUN` has a disclosure behavior:
+
+- right-pointing triangle when collapsed
+- tap to expand thread visibility
+- tap again to collapse
+
+When approvals exist, expansion is forced to keep urgent items visible.
+
+## Architecture in one line
 
 ```text
 Local Codex state -> status collector -> status.json -> Touch Bar scripts -> BetterTouchTool widgets
 ```
 
-### Components
+## Core components
 
 - `codex_status_display.py`
-  - collects running/done/awaiting-response signals
-  - writes `status.json`
+  - collects running / completed / awaiting-response signals
+  - writes normalized status snapshot
 - `touchbar_status_widget.sh`
-  - outputs compact widget text for DONE/RUN/CHAT/APPROVE
+  - compact widget output for DONE / RUN / CHAT / APPROVE
 - `touchbar_approve_action.sh`
-  - runs confirm-first approve action
+  - confirm-first approve action
 - `codex-touchbar` CLI
   - connect / status / btt-commands / preview
 - installer scripts
-  - one-click local install and uninstall
+  - install / uninstall for quick machine setup
 
-## UX behavior highlights
+## The “delegate setup” pattern I wanted
 
-### Expand on demand
+I did not only want this for my own machine.
 
-The RUN widget behaves like a disclosure control:
+I wanted a flow where I can send a folder to another Mac and say one sentence to Codex:
 
-- right-pointing triangle in collapsed state
-- click to expand running list
-- click again to collapse
+“Install this fully, connect to my local Codex state, configure Touch Bar widgets, and report final usable results.”
 
-### Auto-expand on approvals
+That pattern matters if you maintain multiple Macs or collaborate with others who want reproducible local tooling.
 
-When approval-needed count is non-zero:
+## What I learned building this
 
-- running list auto-expands
-- approve button gets stronger visual emphasis
-- collapse is suppressed to avoid missing urgent items
+1. **Tiny interfaces can have huge operational value.**
+2. **Approval signals matter more than raw activity counts.**
+3. **Smooth interaction states increase trust** (especially expand/collapse). 
+4. **Installation simplicity determines adoption** more than technical sophistication.
 
-### Horizontal chat navigation
+## Open source
 
-Instead of trying to cram many thread labels into one slot, the chat area is scrollable and snap-aligned.
-
-You can skim 2-3 by default and slide for the rest.
-
-## Why open-source this
-
-I think local AI tooling needs better human interfaces.
-
-Many of us are running sophisticated workflows, but still lack compact control surfaces that fit daily usage patterns. The Touch Bar is imperfect hardware, but it is still a useful micro-display for fast status + action loops.
-
-By open-sourcing this project, I hope others can:
-
-- adapt it to Stream Deck / menu bar / OLED keyboards
-- swap Codex signals for other local agent systems
-- improve the visual and interaction model
-
-## Installation philosophy
-
-I also optimized for a delegated setup pattern:
-
-You can send this folder to another machine and ask Codex to install/configure it end-to-end with one prompt.
-
-That matters when you manage more than one development machine and want reproducible local automation.
-
-## What I learned
-
-A few practical lessons:
-
-- tiny feedback surfaces reduce cognitive load more than expected
-- approve-state signaling is more important than raw running counts
-- smooth expand/collapse behavior improves trust in the UI
-- minimizing manual setup steps is the difference between "cool demo" and "daily tool"
-
-## What comes next
-
-Potential next steps:
-
-- one-click BetterTouchTool preset import
-- menu bar fallback for non-Touch Bar Macs
-- optional telemetry-free usage metrics (strictly local)
-- richer grouping by project / workspace
-
-## Repo
-
-If you want to try it or fork it:
+If you want to use it, fork it, or adapt it for Stream Deck / menu bar / other agent stacks:
 
 https://github.com/Yaobin29/codex-touchbar-status
 
-If you build a variant, I would love to see it.
+If you ship a variant, I would love to see it.
