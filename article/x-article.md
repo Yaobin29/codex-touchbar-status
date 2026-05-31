@@ -1,5 +1,7 @@
 # I Turned a “Dead” MacBook Touch Bar Into a Live AI Ops Panel
 
+![Codex TouchBar Status social cover](./assets/social-cover.png)
+
 Most people wrote off the Touch Bar.
 
 I did too.
