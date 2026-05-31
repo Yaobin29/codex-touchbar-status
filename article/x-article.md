@@ -132,6 +132,8 @@ Potential next steps:
 
 ## Repo
 
-If you want to try it or fork it, check the GitHub project in this post.
+If you want to try it or fork it:
+
+https://github.com/Yaobin29/codex-touchbar-status
 
 If you build a variant, I would love to see it.
