@@ -105,7 +105,9 @@ CHAT_RUNNING_STALE_MINUTES = 120
 AWAITING_RESPONSE_STALE_DAYS = 3
 THREAD_SCAN_LIMIT = 500
 MAX_ROLLOUT_TAIL_BYTES = 1_000_000
+TOUCHBAR_CHAT_LIMIT = 10
 CODEX_STATE_DB = "state_5.sqlite"
+THREAD_LINK_RE = re.compile(r"codex://threads/([0-9a-f-]+)", re.IGNORECASE)
 THREAD_TERMINAL_EVENTS = {"task_complete", "turn_aborted", "error"}
 APPROVAL_EVENT_HINTS = ("approval", "approve", "permission_request")
 AWAITING_RESPONSE_TOOL_NAMES = {"request_user_input"}
@@ -134,6 +136,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-wire-bytes", type=int, default=DEFAULT_MAX_WIRE_BYTES)
     parser.add_argument("--project-name", action="append", default=[], help="Extra whitelisted project name to scan for.")
     parser.add_argument("--mark-seen", action="store_true", help="Legacy: mark current completed chat runs as viewed and exit.")
+    parser.add_argument("--mark-seen-key", help="Mark one completed chat key as viewed and exit.")
     parser.add_argument("--http", action="store_true", help="Serve the wire payload over HTTP for WiFi display mode.")
     parser.add_argument("--http-host", default="0.0.0.0", help="HTTP bind host for --http. Default: 0.0.0.0.")
     parser.add_argument("--http-port", type=int, default=8787, help="HTTP port for --http. Default: 8787.")
@@ -580,7 +583,10 @@ def display_name_for_item(item: dict[str, Any], key: str, overrides: dict[str, s
     original = safe_text(item.get(key) or fallback, 56)
     if item_id and item_id in overrides:
         return overrides[item_id]
-    return short_ascii_name(original, original, 22)
+    short_label = safe_text(item.get("short_label"), SHORT_LABEL_ASCII_LIMIT)
+    if short_label:
+        return short_label
+    return semantic_short_label(original, fallback)
 
 
 def apply_display_config(snapshot: dict[str, Any], display: dict[str, Any] | None) -> dict[str, Any]:
@@ -610,7 +616,8 @@ def apply_display_config(snapshot: dict[str, Any], display: dict[str, Any] | Non
         for manual in normalize_manual_items(display.get("manual_items")):
             item = {
                 "id": manual["id"],
-                "name": short_ascii_name(overrides.get(manual["id"]) or manual["name"], manual["name"], 22),
+                "name": semantic_short_label(overrides.get(manual["id"]) or manual["name"], manual["name"]),
+                "short_label": semantic_short_label(overrides.get(manual["id"]) or manual["name"], manual["name"]),
                 "status": manual["status"],
                 "source": "manual",
             }
@@ -619,18 +626,26 @@ def apply_display_config(snapshot: dict[str, Any], display: dict[str, Any] | Non
     if not toggles.get("need_response", True):
         awaiting = []
         for item in projects:
-            if isinstance(item, dict) and item.get("status") == "awaiting_response":
+            if isinstance(item, dict) and item.get("status") in {"awaiting_response", "pending_plan"}:
                 item["status"] = "running"
     if not toggles.get("done_count", True):
         completed = []
 
-    result["projects"] = projects[:8]
-    result["awaiting"] = awaiting[:8]
-    result["completed"] = completed[:8]
+    result["projects"] = projects[:TOUCHBAR_CHAT_LIMIT]
+    result["awaiting"] = awaiting[:TOUCHBAR_CHAT_LIMIT]
+    result["completed"] = completed[:TOUCHBAR_CHAT_LIMIT]
     counts = dict(result.get("counts") or {})
-    counts["running_projects"] = len(projects) if toggles.get("run_count", True) else 0
+    base_running = int(counts.get("running_projects", 0) or 0)
+    base_completed_today = int(counts.get("completed_today", 0) or 0)
+    visible_running = sum(
+        1
+        for item in projects
+        if isinstance(item, dict)
+        and str(item.get("status") or "").lower() not in {"awaiting_response", "pending_approval", "pending_plan"}
+    )
+    counts["running_projects"] = max(base_running, visible_running) if toggles.get("run_count", True) else 0
     counts["awaiting_response"] = len(awaiting) if toggles.get("need_response", True) else 0
-    counts["completed_today"] = len(completed) if toggles.get("done_count", True) else 0
+    counts["completed_today"] = base_completed_today if toggles.get("done_count", True) else 0
     counts["done_unseen"] = len(completed) if toggles.get("done_count", True) else 0
     result["counts"] = counts
 
@@ -697,6 +712,124 @@ def safe_text(value: Any, limit: int = 72) -> str:
     if len(text) <= limit:
         return text
     return text[: max(0, limit - 1)].rstrip() + "..."
+
+
+SHORT_LABEL_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("绿色", "橘色", "蓝色"), "状态灯"),
+    (("呼吸灯", "短名"), "状态灯"),
+    (("完成", "未读"), "未读完成"),
+    (("需要", "确认"), "确认提醒"),
+    (("logo",), "Logo"),
+    (("对话", "名字"), "对话名"),
+    (("星号", "绿点"), "绿点"),
+    (("logo", "白色"), "Logo"),
+    (("chatbox", "内容"), "Chatbox"),
+    (("bettertouchtool", "cli"), "BTT CLI"),
+    (("better touch", "cli"), "BTT CLI"),
+    (("bettertouchtool", "skill"), "BTT技能"),
+    (("better touch", "skill"), "BTT技能"),
+    (("touch bar",), "触栏状态"),
+    (("touchbar",), "触栏状态"),
+    (("bettertouchtool",), "触栏状态"),
+    (("better touch",), "触栏状态"),
+    (("远程", "压缩"), "压缩断流"),
+    (("压缩", "断流"), "压缩断流"),
+    (("stream disconnected",), "压缩断流"),
+    (("compact",), "压缩断流"),
+    (("notion", "cli"), "Notion"),
+    (("shadowrocket", "小火箭"), "小火箭"),
+    (("wireguard", "vpn"), "VPN"),
+)
+
+SHORT_LABEL_STOP_WORDS = {
+    "帮我",
+    "继续",
+    "完成",
+    "然后",
+    "这个",
+    "那个",
+    "我的",
+    "现在",
+    "一下",
+    "任务",
+    "需要",
+    "设置",
+    "阅读",
+    "chat",
+    "codex",
+    "thread",
+    "threads",
+    "computer",
+    "plugin",
+    "openai",
+    "bundled",
+}
+
+SHORT_LABEL_CJK_LIMIT = 7
+SHORT_LABEL_WORD_LIMIT = 3
+SHORT_LABEL_ASCII_LIMIT = 22
+
+
+def clean_short_label_source(value: Any) -> str:
+    text = safe_text(value, 280)
+    text = re.sub(r"codex://threads/[0-9a-f-]+", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\[@([^\]]+)\]\([^)]+\)", r" \1 ", text)
+    text = re.sub(r"plugin://\S+", " ", text)
+    text = re.sub(r"['\"]?/Users/\S+", " ", text)
+    text = re.sub(r"https?://\S+", " ", text)
+    text = re.sub(r"[_#*`|>\[\](){},:：;；/\\-]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def title_word(value: str) -> str:
+    return value if value.isupper() else value[:1].upper() + value[1:]
+
+
+def semantic_short_label(value: Any, fallback: str = "Chat", limit: int = SHORT_LABEL_CJK_LIMIT) -> str:
+    cjk_limit = max(2, int(limit or SHORT_LABEL_CJK_LIMIT))
+    text = clean_short_label_source(value)
+    if not text:
+        return safe_text(fallback, SHORT_LABEL_ASCII_LIMIT)
+    lower = text.lower()
+    for needles, label in SHORT_LABEL_RULES:
+        if all(needle.lower() in lower for needle in needles):
+            if label.isascii():
+                return safe_text(label, SHORT_LABEL_ASCII_LIMIT)
+            return safe_text(label, cjk_limit)
+
+    cjk_candidates = re.findall(r"[\u4e00-\u9fff]{2,}", text)
+    cjk_compact = "".join(cjk_candidates)
+    if cjk_compact:
+        cleaned_compact = cjk_compact
+        for stop in SHORT_LABEL_STOP_WORDS:
+            cleaned_compact = cleaned_compact.replace(stop, "")
+        cleaned_compact = cleaned_compact.strip()
+        if 2 <= len(cleaned_compact) <= cjk_limit:
+            return cleaned_compact
+        if len(cleaned_compact) > cjk_limit:
+            return cleaned_compact[-cjk_limit:]
+
+    for candidate in cjk_candidates:
+        cleaned = candidate
+        for stop in SHORT_LABEL_STOP_WORDS:
+            cleaned = cleaned.replace(stop, "")
+        cleaned = cleaned.strip()
+        if 2 <= len(cleaned) <= cjk_limit:
+            return cleaned
+        if len(cleaned) > cjk_limit:
+            return cleaned[-cjk_limit:]
+
+    words = re.findall(r"[A-Za-z][A-Za-z0-9+.-]*", text)
+    useful = [word for word in words if word.lower() not in SHORT_LABEL_STOP_WORDS]
+    if useful:
+        selected: list[str] = []
+        for word in useful[:SHORT_LABEL_WORD_LIMIT]:
+            pretty = title_word(word)
+            candidate = " ".join([*selected, pretty])
+            if len(candidate) <= SHORT_LABEL_ASCII_LIMIT or not selected:
+                selected.append(pretty)
+        return " ".join(selected)
+    return safe_text(fallback, SHORT_LABEL_ASCII_LIMIT)
 
 
 def response_content_text(content: Any) -> str:
@@ -791,6 +924,27 @@ def parse_jsonl_timestamp(value: Any) -> dt.datetime | None:
     if not text:
         return None
     return parse_datetime(text.replace("Z", "+00:00"))
+
+
+def parse_codex_epoch(value: Any) -> dt.datetime | None:
+    if value is None:
+        return None
+    try:
+        raw = float(value)
+    except (TypeError, ValueError):
+        return None
+    if raw <= 0:
+        return None
+    if raw > 10_000_000_000:
+        raw /= 1000
+    try:
+        return dt.datetime.fromtimestamp(raw, tz=dt.timezone.utc)
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
+def thread_updated_at(row: dict[str, Any]) -> dt.datetime | None:
+    return parse_codex_epoch(row.get("updated_at_ms")) or parse_codex_epoch(row.get("updated_at"))
 
 
 def codex_home(explicit: str | Path | None = None) -> Path:
@@ -925,13 +1079,46 @@ def thread_display_name(row: dict[str, Any]) -> str:
     return title
 
 
+def thread_short_label(row: dict[str, Any]) -> str:
+    raw = " ".join(
+        text
+        for text in (
+            str(row.get("title") or ""),
+            str(row.get("preview") or ""),
+            str(row.get("agent_nickname") or ""),
+        )
+        if text.strip()
+    )
+    return semantic_short_label(raw, row.get("agent_nickname") or row.get("title") or "Chat")
+
+
+def linked_thread_context(row: dict[str, Any], rows_by_id: dict[str, dict[str, Any]]) -> str:
+    source = " ".join(str(row.get(key) or "") for key in ("title", "preview"))
+    parts: list[str] = []
+    seen: set[str] = set()
+    for match in THREAD_LINK_RE.finditer(source):
+        thread_id = match.group(1)
+        if thread_id in seen:
+            continue
+        seen.add(thread_id)
+        linked = rows_by_id.get(thread_id)
+        if not linked:
+            continue
+        parts.extend(
+            str(linked.get(key) or "")
+            for key in ("title", "preview", "agent_nickname")
+            if str(linked.get(key) or "").strip()
+        )
+    return safe_text(" ".join(parts), 360)
+
+
 def thread_rows_from_codex(limit: int = THREAD_SCAN_LIMIT, codex_home_path: str | Path | None = None) -> list[dict[str, Any]]:
     home = codex_home(codex_home_path)
     db_path = home / CODEX_STATE_DB
     if not db_path.exists():
         return []
     query = """
-        select id, title, rollout_path, updated_at, archived, agent_nickname, agent_role
+        select id, title, preview, rollout_path, updated_at, updated_at_ms, archived, agent_nickname, agent_role
         from threads
         where archived = 0
         order by updated_at desc
@@ -958,6 +1145,7 @@ def thread_event_summary(rollout_path: Any) -> dict[str, Any]:
         "pending_response_at": None,
         "pending_plan_review": False,
         "pending_plan_review_at": None,
+        "last_user_text": "",
         "last_user_at": None,
         "last_task_started_at": None,
     }
@@ -978,9 +1166,13 @@ def thread_event_summary(rollout_path: Any) -> dict[str, Any]:
             event_type = str(payload.get("type") or "")
             turn_id = str(payload.get("turn_id") or payload.get("turnId") or "")
             if event_type == "user_message":
+                user_text = response_content_text(
+                    payload.get("message") or payload.get("content") or payload.get("text")
+                )
                 summary.update(
                     {
                         "last_user_at": event_at,
+                        "last_user_text": safe_text(user_text, 240),
                         "pending_plan_review": False,
                         "pending_plan_review_at": None,
                     }
@@ -1047,9 +1239,11 @@ def thread_event_summary(rollout_path: Any) -> dict[str, Any]:
             elif item_type == "message":
                 role = str(payload.get("role") or "")
                 if role == "user":
+                    user_text = response_content_text(payload.get("content"))
                     summary.update(
                         {
                             "last_user_at": event_at,
+                            "last_user_text": safe_text(user_text, 240),
                             "pending_plan_review": False,
                             "pending_plan_review_at": None,
                         }
@@ -1115,63 +1309,100 @@ def recent_jsonl_lines(path: Path, max_bytes: int = MAX_ROLLOUT_TAIL_BYTES) -> l
 
 def collect_chat_threads(root: Path, now: dt.datetime, codex_home_path: str | Path | None = None) -> dict[str, Any]:
     ensure_state(root)
+    paths = state_paths(root)
+    seen_completed = load_seen_keys(paths["seen_chat_completions"])
     home = codex_home(codex_home_path)
     comparable_now = normalize_now_for_compare(now)
     running_cutoff = comparable_now - dt.timedelta(minutes=CHAT_RUNNING_STALE_MINUTES)
+    recent_activity_cutoff = comparable_now - dt.timedelta(minutes=20)
     awaiting_cutoff = comparable_now - dt.timedelta(days=AWAITING_RESPONSE_STALE_DAYS)
 
     running: list[dict[str, str]] = []
     completed_today: list[dict[str, str]] = []
+    completed_unseen: list[dict[str, str]] = []
     awaiting_response: list[dict[str, str]] = []
     active_projects: list[dict[str, str]] = []
 
-    for row in thread_rows_from_codex(codex_home_path=home):
+    rows = thread_rows_from_codex(codex_home_path=home)
+    rows_by_id = {str(row.get("id") or ""): row for row in rows if str(row.get("id") or "")}
+
+    for row in rows:
         thread_id = str(row.get("id") or "")
         if not thread_id:
             continue
         events = thread_event_summary(row.get("rollout_path"))
         title = thread_display_name(row)
+        linked_context = linked_thread_context(row, rows_by_id)
+        short_label = semantic_short_label(
+            f"{events.get('last_user_text') or ''} {title} {row.get('preview') or ''} {linked_context}",
+            thread_short_label(row),
+            7,
+        )
+        updated_at = thread_updated_at(row)
         status_event = events.get("last_status_event")
         status_at = events.get("last_status_at")
-        if events.get("pending_response") or events.get("pending_plan_review"):
-            pending_at = events.get("pending_response_at") or events.get("pending_plan_review_at")
+        if events.get("pending_approval") or events.get("pending_response") or events.get("pending_plan_review"):
+            if events.get("pending_approval"):
+                pending_at = status_at
+                waiting_status = "pending_approval"
+                source = "codex-approval"
+            elif events.get("pending_plan_review"):
+                pending_at = events.get("pending_plan_review_at")
+                waiting_status = "pending_plan"
+                source = "codex-plan"
+            else:
+                pending_at = events.get("pending_response_at")
+                waiting_status = "awaiting_response"
+                source = "codex-chat"
             if isinstance(pending_at, dt.datetime) and pending_at < awaiting_cutoff:
                 continue
             waiting_item = {
                 "title": title,
-                "status": "awaiting_response",
-                "source": "codex-chat",
+                "short_label": short_label,
+                "status": waiting_status,
+                "source": source,
                 "id": thread_id,
             }
             if isinstance(pending_at, dt.datetime):
                 waiting_item["waiting_since"] = pending_at.isoformat()
             awaiting_response.append(waiting_item)
-            active_projects.append({"name": title, "status": "awaiting_response", "id": thread_id})
+            active_projects.append({"name": title, "short_label": short_label, "status": waiting_status, "id": thread_id})
             continue
         if status_event == "task_started" and isinstance(status_at, dt.datetime) and status_at >= running_cutoff:
-            running_item = {"name": title, "status": "running", "id": thread_id}
+            running_item = {"name": title, "short_label": short_label, "status": "running", "id": thread_id}
             running.append(running_item)
             active_projects.append(running_item)
             continue
         completed_at = events.get("last_completion_at")
         if isinstance(completed_at, dt.datetime) and is_same_local_day(completed_at, now):
             key = chat_completion_key(thread_id, completed_at)
-            completed_today.append(
-                {
-                    "title": title,
-                    "status": "done",
-                    "completed_at": completed_at.isoformat(),
-                    "key": key,
-                    "id": thread_id,
-                }
-            )
+            completed_item = {
+                "title": title,
+                "short_label": short_label,
+                "status": "done_unread" if key not in seen_completed else "done",
+                "completed_at": completed_at.isoformat(),
+                "key": key,
+                "id": thread_id,
+            }
+            completed_today.append(completed_item)
+            if key not in seen_completed:
+                completed_unseen.append(completed_item)
+            continue
+        if (
+            isinstance(updated_at, dt.datetime)
+            and updated_at >= recent_activity_cutoff
+            and status_event not in THREAD_TERMINAL_EVENTS
+        ):
+            running_item = {"name": title, "short_label": short_label, "status": "running", "id": thread_id}
+            running.append(running_item)
+            active_projects.append(running_item)
 
     return {
-        "running": running[:8],
-        "active_projects": active_projects[:8],
+        "running": running[:TOUCHBAR_CHAT_LIMIT],
+        "active_projects": active_projects[:TOUCHBAR_CHAT_LIMIT],
         "completed_today": completed_today[:24],
-        "completed_unseen": completed_today[:24],
-        "awaiting_response": awaiting_response[:8],
+        "completed_unseen": completed_unseen[:TOUCHBAR_CHAT_LIMIT],
+        "awaiting_response": awaiting_response[:TOUCHBAR_CHAT_LIMIT],
         "source": str(home / CODEX_STATE_DB),
     }
 
@@ -1186,6 +1417,18 @@ def mark_chat_completed_seen(root: Path, now: dt.datetime) -> int:
             existing.add(key)
     write_json(paths["seen_chat_completions"], {"seen": sorted(existing)})
     return len(chat["completed_today"])
+
+
+def mark_chat_completion_key_seen(root: Path, key: str) -> int:
+    clean_key = str(key or "").strip()
+    if not clean_key:
+        return 0
+    paths = ensure_state(root)
+    existing = load_seen_keys(paths["seen_chat_completions"])
+    before = len(existing)
+    existing.add(clean_key)
+    write_json(paths["seen_chat_completions"], {"seen": sorted(existing)})
+    return 1 if len(existing) > before else 0
 
 
 def collect_promote_reviews(root: Path) -> dict[str, Any]:
@@ -1277,6 +1520,26 @@ def collect_running_projects(extra_names: list[str] | None = None) -> list[dict[
     return running
 
 
+def recent_active_threads_count(codex_home_path: str | Path | None = None, minutes: int = 20) -> int:
+    home = codex_home(codex_home_path)
+    db_path = home / CODEX_STATE_DB
+    if not db_path.exists():
+        return 0
+    cutoff_ms = int(time.time() * 1000) - max(1, minutes) * 60 * 1000
+    query = """
+        select count(*)
+        from threads
+        where archived = 0
+          and coalesce(updated_at_ms, 0) >= ?
+    """
+    try:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as con:
+            row = con.execute(query, (cutoff_ms,)).fetchone()
+        return int((row or [0])[0] or 0)
+    except Exception:
+        return 0
+
+
 def build_snapshot(
     root: Path,
     now: dt.datetime,
@@ -1287,29 +1550,77 @@ def build_snapshot(
 ) -> dict[str, Any]:
     del extra_project_names
     chat = collect_chat_threads(root, now, codex_home_path=codex_home_path)
+    manual_approvals = collect_manual_approvals(root)
+    promote_reviews = collect_promote_reviews(root)
+
+    approval_items: list[dict[str, str]] = []
+    for index, item in enumerate(manual_approvals):
+        title = safe_text(item.get("title") or "Approval needed", 56)
+        if title:
+            approval_items.append(
+                {
+                    "title": title,
+                    "short_label": semantic_short_label(title, "审批"),
+                    "status": "pending_approval",
+                    "source": safe_text(item.get("source") or "manual", 36),
+                    "id": f"manual-approval-{index}",
+                }
+            )
+    for index, item in enumerate(promote_reviews.get("items") or []):
+        if not isinstance(item, dict):
+            continue
+        title = safe_text(item.get("source") or item.get("reason") or "Review needed", 56)
+        if title:
+            approval_items.append(
+                {
+                    "title": title,
+                    "short_label": semantic_short_label(title, "审批"),
+                    "status": "pending_approval",
+                    "source": "promote-review",
+                    "id": f"promote-review-{index}",
+                }
+            )
+
+    awaiting_items = (chat["awaiting_response"] + approval_items)[:TOUCHBAR_CHAT_LIMIT]
+    active_items = (
+        chat["active_projects"]
+        + [
+            {
+                "name": item["title"],
+                "short_label": item.get("short_label", semantic_short_label(item["title"], "审批")),
+                "status": item["status"],
+                "id": item["id"],
+            }
+            for item in approval_items
+        ]
+    )[:TOUCHBAR_CHAT_LIMIT]
 
     alerts: list[str] = []
-    for item in chat["awaiting_response"][:2]:
+    for item in awaiting_items[:2]:
         alerts.append(safe_text(f"Response needed: {item['title']}", 74))
     for item in chat["running"][:2]:
         alerts.append(safe_text(f"Running: {item['name']}", 74))
-    for item in chat["completed_today"][:2]:
+    for item in chat["completed_unseen"][:2]:
         alerts.append(safe_text(f"Done: {item['title']}", 74))
 
+    running_count = len(chat["running"])
+    if running_count <= 0:
+        running_count = recent_active_threads_count(codex_home_path=codex_home_path, minutes=20)
+
     counts = {
-        "awaiting_response": len(chat["awaiting_response"]),
-        "running_projects": len(chat["active_projects"]),
+        "awaiting_response": len(awaiting_items),
+        "running_projects": running_count,
         "completed_today": len(chat["completed_today"]),
-        "done_unseen": len(chat["completed_today"]),
+        "done_unseen": len(chat["completed_unseen"]),
     }
     snapshot = {
         "schema_version": WIRE_SCHEMA_VERSION,
         "updated_at": now.isoformat(),
         "counts": counts,
         "alerts": alerts[:6],
-        "projects": chat["active_projects"][:6],
-        "awaiting": chat["awaiting_response"][:6],
-        "completed": chat["completed_today"][:6],
+        "projects": active_items[:TOUCHBAR_CHAT_LIMIT],
+        "awaiting": awaiting_items[:TOUCHBAR_CHAT_LIMIT],
+        "completed": chat["completed_unseen"][:TOUCHBAR_CHAT_LIMIT],
         "sources": {
             "codex_threads": chat["source"],
             "seen_chat_completions": str(state_paths(root)["seen_chat_completions"]),
@@ -1731,6 +2042,11 @@ def main() -> int:
         marked = mark_chat_completed_seen(root, now)
         if not args.quiet:
             print(f"marked_seen={marked}", flush=True)
+        return 0
+    if args.mark_seen_key:
+        marked = mark_chat_completion_key_seen(root, args.mark_seen_key)
+        if not args.quiet:
+            print(f"marked_seen_key={marked}", flush=True)
         return 0
     serial_fd: int | None = None
     httpd: ThreadingHTTPServer | None = None
